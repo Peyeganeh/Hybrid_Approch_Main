@@ -1,0 +1,225 @@
+clc;
+clear all;
+close all;
+load('dataset.mat');  
+
+%% Making Network:
+global position N
+N=50; % Number of Nodes in network
+position=randsrc(2,N,1:1000); % set position of each node in network 1000x1000 meters
+S=1; % Source Node
+D=50; % Destination Node
+Net=zeros(N);
+range=250; % Radio propagation range of each node (meter)
+plot(position(1,:),position(2,:),'ro');
+title('Network');
+xlabel('x (m)');
+ylabel('y (m)');
+grid();
+hold on
+
+for i=1:N
+    for j=1:N
+        if i~=j && dist(position(:,i)',position(:,j))<=range
+            Net(i,j)=1; %Connection between 2 nodes (i,j)
+            line([position(1,i),position(1,j)],[position(2,i),position(2,j)]);
+        end
+    end
+end
+plot(position(1,S),position(2,S),'ks');
+plot(position(1,D),position(2,D),'g^');
+
+%% Route Discovery:
+for i=1:30
+    path=S;
+    tik=zeros(1,N);
+    tik(S)=1;
+    while (1)
+        a=find(Net(path(end),:)==1);
+        b=a(tik(a)==0);
+        if isempty(b)==1
+            break;
+        end
+        next=randsrc(1,1,b);
+        if tik(next)==0
+            path=[path,next];
+            tik(next)=1;
+        end
+        if path(end)==D
+            routePool{i}=path;
+            break;
+        end
+    end
+end
+j=1;
+for i=1:numel(routePool)
+    if isempty(routePool{i})==0
+        Pool{j}=routePool{i};
+        j=j+1;
+    end
+end
+for i=1:numel(Pool)-1
+    for k=i+1:numel(Pool)
+        if numel(Pool{i})== numel(Pool{k})
+            if sum(Pool{i}==Pool{k})==numel(Pool{k})
+                Pool{k}=[];
+            end
+        end
+    end
+end
+routePool=Pool;
+clear Pool;
+j=1;
+for i=1:numel(routePool)
+    if isempty(routePool{i})==0
+        Pool{j}=routePool{i};
+        j=j+1;
+    end
+end
+
+for k=1:numel(Pool)
+    figure, plot(position(1,:),position(2,:),'ro');
+    hold on;
+    for i=1:numel(Pool{k})-1
+        line([position(1,Pool{k}(i)),position(1,Pool{k}(i+1))],[position(2,Pool{k}(i)),position(2,Pool{k}(i+1))]);
+    end
+end
+%% Sorting routes
+for i=1:numel(Pool)
+    count(i)=numel(Pool{i});
+end
+[~,idx]=sort(count);
+for i=1:numel(Pool)
+    sPool{i}=Pool{idx(i)};
+end
+Pool=sPool;
+clear sPool
+%% Packet Injection
+packeti=rand(2500,1); % message importance
+packetc=50*ones(2500,1); % Capasity of message (from 1 kb to 100 kb)
+packet=[packeti,packetc];
+j=1;
+disp('----------------------------');
+discard=0;
+tl=zeros(1,50);
+E=tl;
+kk=1;
+while isempty(packet) == 0
+    msg = packet(1, :);
+    packet(1, :) = [];
+    if detect_attack(msg, data)
+        discard = discard + 1;
+        continue;
+    end
+
+end
+total_Time=(sum(tl));
+Time=sum(tl);
+Energy=sum(E);
+
+load('dataset.mat')
+X = [data.TransmissionRate, data.TransmissionTime];
+[C,IA,y] = unique([data.Type]);
+load('dataset.mat')
+X = [data.TransmissionRate, data.TransmissionTime];
+[unique_labels,IA,y] = unique([data.Type]);
+%% Tree classifier
+num_folds = 10;
+max_num_split = 5; % max numer of splits in the tree classifier
+
+cvp = cvpartition(length(y),'KFold',num_folds);
+acc_tree = zeros(num_folds, 1);
+confusion_matrix_tree = zeros(num_folds, 3,3);
+for f = 1:num_folds
+    classificationTree = fitctree(...
+        X(cvp.training(f), :), ...
+        y(cvp.training(f)), ...
+        'SplitCriterion', 'gdi', ...
+        'MaxNumSplits', max_num_split, ...
+        'Surrogate', 'off', ...
+        'ClassNames', [1; 2; 3]);
+
+    y_pred = classificationTree.predict(X(cvp.test(f), :));
+    acc_tree(f) = sum(y(cvp.test(f)) == y_pred)/length(y_pred);
+    C = confusionmat(y(cvp.test(f)),y_pred);
+    confusion_matrix_tree(f, :, :) = C./sum(C,2);
+end
+C = squeeze(mean(confusion_matrix_tree));
+disp(['Mean accuracy for Tree classifier: ', num2str(mean(acc_tree))])
+disp('Mean Confution matrix for Tree classifier: ')
+disp(C)
+%% Test the tree clasdfier on overall data
+% Do classification on all data 80% train and 20% test
+cvp = cvpartition(length(y),'HoldOut',0.2);
+
+classificationTree = fitctree(...
+        X(cvp.training, :), ...
+        y(cvp.training), ...
+        'SplitCriterion', 'gdi', ...
+        'MaxNumSplits', max_num_split, ...
+        'Surrogate', 'off', ...
+        'ClassNames', [1; 2; 3]);
+
+y_pred = classificationTree.predict(X(cvp.test, :));
+figure;
+confusionchart(unique_labels(y(cvp.test)),unique_labels((y_pred)), 'RowSummary', 'total-normalized')
+title('Confusion Matrix for Tree')
+%% SVM classifier
+num_folds = 10;
+max_num_split = 5; % max numer of splits in the tree classifier
+
+cvp = cvpartition(length(y),'KFold',num_folds);
+acc_svm = zeros(num_folds, 1);
+confusion_matrix_svm = zeros(num_folds, 3,3);
+for f = 1:num_folds
+    template = templateSVM(...
+        'KernelFunction', 'gaussian', ...
+        'PolynomialOrder', [], ...
+        'KernelScale', 'auto', ...
+        'BoxConstraint', 1, ...
+        'Standardize', true);
+    classificationSVM = fitcecoc(...
+        X(cvp.training(f), :), ...
+        y(cvp.training(f)), ...
+        'Learners', template, ...
+        'Coding', 'onevsone', ...
+        'ClassNames', [1; 2; 3]);
+
+    y_pred = classificationSVM.predict(X(cvp.test(f), :));
+    acc_svm(f) = sum(y(cvp.test(f)) == y_pred)/length(y_pred);
+    C = confusionmat(y(cvp.test(f)),y_pred);
+    confusion_matrix_svm(f, :, :) = C./sum(C,2);
+end
+C = squeeze(mean(confusion_matrix_svm));
+disp(['Mean accuracy for SVM classifier: ', num2str(mean(acc_svm))])
+disp('Mean Confution matrix for SVM classifier: ')
+disp(C)
+%% test SVM on overall data
+% Do classification on all data 80% train and 20% test
+cvp = cvpartition(length(y),'HoldOut',0.2);
+
+template = templateSVM(...
+        'KernelFunction', 'gaussian', ...
+        'PolynomialOrder', [], ...
+        'KernelScale', 'auto', ...
+        'BoxConstraint', 1, ...
+        'Standardize', true);
+classificationSVM = fitcecoc(...
+    X(cvp.training, :), ...
+    y(cvp.training), ...
+    'Learners', template, ...
+    'Coding', 'onevsone', ...
+    'ClassNames', [1; 2; 3]);
+y_pred = classificationSVM.predict(X(cvp.test, :));
+figure;
+confusionchart(unique_labels(y(cvp.test)),unique_labels((y_pred)), 'RowSummary', 'total-normalized')
+title('Confusion Matrix for SVM')
+%%
+figure 
+boxplot([acc_svm, acc_tree]);
+xticklabels({'SVM','Tree'})
+xlabel('Method')
+ylabel('Accuracy')
+saveas(gcf,'comparison.pdf')
+[h,p,ci,stats] = ttest(acc_tree, acc_svm);
+disp(['Tree is better: t_(',num2str(stats.df),') = ', num2str(stats.tstat), '  p = ', num2str(p)])
